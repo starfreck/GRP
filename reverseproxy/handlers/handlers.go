@@ -8,9 +8,11 @@ import (
 
 	"github.com/starfreck/grp/reverseproxy"
 	"github.com/starfreck/grp/reverseproxy/middlewares"
+	"github.com/starfreck/grp/reverseproxy/utils"
 )
 
 type ReverseProxyHandler struct {
+	cookieJar          utils.SafeCookieJar
 	upstreamServers    *map[string]*reverseproxy.Server
 	proxyRequestRouter middlewares.ProxyRequestRouter
 }
@@ -25,14 +27,14 @@ func NewReverseProxyHandler(upstreamServers *map[string]*reverseproxy.Server, pr
 		}
 		(*upstreamServers)[host] = server
 	}
-	return &ReverseProxyHandler{upstreamServers: upstreamServers, proxyRequestRouter: proxyRequestRouter}
+	return &ReverseProxyHandler{upstreamServers: upstreamServers, proxyRequestRouter: proxyRequestRouter, cookieJar: *utils.NewSafeCookieJar()}
 }
 
 func (rph *ReverseProxyHandler) HandleResource(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("%s: Received %s request at %s with %s", r.Method, r.Method, r.URL.Path, r.URL.Query())
 	upstreamServer := rph.getUpstreamServer(*r)
-	err := upstreamServer.RoundTrip(w, r, r.Method)
+	err := upstreamServer.RoundTrip(w, r, r.Method, &rph.cookieJar)
 	// if there is any error on proxy server write to response
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -43,7 +45,7 @@ func (rph *ReverseProxyHandler) HandleResource(w http.ResponseWriter, r *http.Re
 }
 
 // Get all upstream server hosts into a slice
-func (rph ReverseProxyHandler) getUpstreamServerHosts() *[]string {
+func (rph *ReverseProxyHandler) getUpstreamServerHosts() *[]string {
 
 	hosts := make([]string, 0, len(*rph.upstreamServers))
 	for k := range *rph.upstreamServers {
@@ -52,7 +54,7 @@ func (rph ReverseProxyHandler) getUpstreamServerHosts() *[]string {
 	return &hosts
 }
 
-func (rph ReverseProxyHandler) getRandomUpstreamServerHost() string {
+func (rph *ReverseProxyHandler) getRandomUpstreamServerHost() string {
 
 	hosts := *rph.getUpstreamServerHosts()
 
@@ -65,7 +67,7 @@ func (rph ReverseProxyHandler) getRandomUpstreamServerHost() string {
 	return randomUpstreamServerHost
 }
 
-func (rph ReverseProxyHandler) getUpstreamServer(r http.Request) *reverseproxy.Server {
+func (rph *ReverseProxyHandler) getUpstreamServer(r http.Request) *reverseproxy.Server {
 
 	// Get a random upstream server
 	upstreamServerHost := rph.getRandomUpstreamServerHost()

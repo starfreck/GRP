@@ -55,12 +55,12 @@ var proxyRequestRouter = func(upstreamHosts []string, r http.Request) string {
 }
 
 // Update request before forwarding to the target host
-var proxyRequestMiddleware = func(s *reverseproxy.Server, proxyReq *http.Request, sourceReq *http.Request) {
+var proxyRequestMiddleware = func(s *reverseproxy.Server, sourceReq *http.Request) {
 	// Add additional headers to the proxy request
-	proxyReq.Header.Set("Accept", "*/*")
+	sourceReq.Header.Set("Accept", "*/*")
 	// Set Auth credentials
 	if len(os.Getenv("API_KEY")) > 0 {
-		proxyReq.Header.Set("Authorization", os.Getenv("API_KEY"))
+		sourceReq.Header.Set("Authorization", os.Getenv("API_KEY"))
 	}
 }
 

@@ -7,5 +7,5 @@ import (
 )
 
 type ProxyRequestRouter func([]string, http.Request) string
-type ProxyRequestMiddleware func(*reverseproxy.Server, *http.Request, *http.Request)
+type ProxyRequestMiddleware func(*reverseproxy.Server, *http.Request)
 type ProxyResponseMiddleware func(*reverseproxy.Server, http.ResponseWriter, *http.Response)

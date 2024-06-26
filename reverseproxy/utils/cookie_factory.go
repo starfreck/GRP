@@ -16,13 +16,19 @@ type CookieFactory struct {
 	RefererURL string
 }
 
-func (cf *CookieFactory) GetCookie(sourceReqHeaders http.Header) error {
+func (cf *CookieFactory) GetCookie(userAgent string) error {
+
 	req, err := http.NewRequest("GET", cf.Url, nil)
 	if err != nil {
 		return err
 	}
 
-	req.Header = sourceReqHeaders
+	req.Header.Set("Accept-Encoding", "gzip, deflate")
+	req.Header.Set("Connection", "keep-alive")
+	req.Header.Set("Dnt", "1")
+	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -43,6 +49,7 @@ func (cf *CookieFactory) GetCookie(sourceReqHeaders http.Header) error {
 }
 
 func (cf *CookieFactory) extractCookieFromHTML(html string) {
+
 	re := regexp.MustCompile(`toNumbers\("([a-fA-F0-9]+)"\)`)
 	matches := re.FindAllStringSubmatch(html, -1)
 

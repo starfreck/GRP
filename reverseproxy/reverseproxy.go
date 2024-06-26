@@ -1,7 +1,6 @@
 package reverseproxy
 
 import (
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -19,17 +18,14 @@ type Server struct {
 	Scheme     string
 	RefererURL string
 
-	// TODO: Remove this outside of this struct or else it won't be shared
-	CookieJar     map[string]string
 	cookieFactory utils.CookieFactory
 
-	ProxyRequestMiddleware  func(s *Server, req *http.Request, r *http.Request)
-	ProxyResponseMiddleware func(s *Server, w http.ResponseWriter, resp *http.Response)
+	ProxyRequestMiddleware  func(*Server, *http.Request)
+	ProxyResponseMiddleware func(*Server, http.ResponseWriter, *http.Response)
 }
 
 func (s *Server) init() {
 	s.setProxyURL()
-	s.CookieJar = make(map[string]string)
 	s.cookieFactory = utils.CookieFactory{Url: s.Url, RefererURL: s.RefererURL, Cookie: ""}
 }
 
@@ -41,22 +37,27 @@ func (s *Server) setProxyURL() {
 	s.Url = fmt.Sprintf("%s://%s/", s.Scheme, s.Host)
 }
 
-func (s *Server) getUserAgent() (string, error) {
+func (s *Server) getUserAgent() string {
 
 	header := os.Getenv("USER_AGENT")
 
 	if len(header) == 0 {
-		return header, errors.New("no user agent was found in the environment file, It will fail the request")
+		log.Println("no user agent was found in the environment file, it could fail the request")
 	}
 
-	return header, nil
+	return header
 }
 
-func (s *Server) RoundTrip(w http.ResponseWriter, r *http.Request, method string) error {
+func (s *Server) RoundTrip(w http.ResponseWriter, r *http.Request, method string, cookieJar *utils.SafeCookieJar) error {
 
 	s.init()
 
 	log.Println("Target server URL: ", s.Url)
+
+	// Call user callback function to modify the proxy request
+	if s.ProxyRequestMiddleware != nil {
+		s.ProxyRequestMiddleware(s, r)
+	}
 
 	// Important Note:
 	// If the target server does not support SSL, remove all SSL related headers
@@ -75,35 +76,39 @@ func (s *Server) RoundTrip(w http.ResponseWriter, r *http.Request, method string
 	// Important Note:
 	// If the target server has testcookie-nginx-module enabled set __test cookie
 	// A fixed User-Agent is required and configured in the config file
-	if s.TestCookie && s.CookieJar[s.Host] == "" {
+	if s.TestCookie && (*cookieJar).GetCookie(s.Host) == "" {
 
-		// Set user-agent before creating the cookie request
+		// Set User-Agent before creating the cookie request
 		// Update the User-Agent header in original request
-		userAgent, err := s.getUserAgent()
-		if err != nil {
-			log.Panicln(err)
-		}
-		r.Header.Set("User-Agent", userAgent)
+		r.Header.Set("User-Agent", s.getUserAgent())
 		log.Printf("Auth cookie is not set for %s...\n", s.Url)
-		// Clone the headers from the original request to get the cookie
-		if err := s.cookieFactory.GetCookie(r.Header.Clone()); err != nil {
+		if err := s.cookieFactory.GetCookie(s.getUserAgent()); err != nil {
 			return err
 		} else {
 			s.Url = s.cookieFactory.Url
 			s.RefererURL = s.cookieFactory.RefererURL
-			s.CookieJar[s.Host] = s.cookieFactory.Cookie
+			// Cache cookie, url and referer url in cookie jar
+			(*cookieJar).SetCookie(s.Host, s.cookieFactory.Cookie)
+			(*cookieJar).SetUrl(s.Host, s.cookieFactory.Url)
+			(*cookieJar).SetRefererUrl(s.Host, s.cookieFactory.RefererURL)
+
 		}
 	}
 
+	// Get cookie, url and referer url from the cookie jar
 	if s.TestCookie {
-		r.Header.Set("Cookie", fmt.Sprintf("__test=%s; expires=Thu, 31-Dec-37 23:55:55 GMT; path=/", s.CookieJar[s.Host]))
-	}
-	if s.RefererURL != "" {
-		r.Header.Set("Referer", s.RefererURL)
+		r.Header.Set("User-Agent", s.getUserAgent())
+		r.Header.Set("Cookie", fmt.Sprintf("__test=%s; expires=Thu, 31-Dec-37 23:55:55 GMT; path=/", (*cookieJar).GetCookie(s.Host)))
+		s.Url = (*cookieJar).GetUrl(s.Host)
+		s.RefererURL = (*cookieJar).GetRefererUrl(s.Host)
 	}
 
 	// Set the host in request headers
 	r.Header.Set("Host", s.Host)
+	r.Header.Set("Accept-Encoding", "gzip, deflate")
+	if s.RefererURL != "" {
+		r.Header.Set("Referer", s.RefererURL)
+	}
 
 	// Create a new proxy request
 	req, err := http.NewRequest(method, s.Url, r.Body)
@@ -113,11 +118,6 @@ func (s *Server) RoundTrip(w http.ResponseWriter, r *http.Request, method string
 
 	// Copy headers and query params from the source request to proxy request
 	utils.CopySourceAttributes(req, r)
-
-	// Call user callback function to modify the proxy request
-	if s.ProxyRequestMiddleware != nil {
-		s.ProxyRequestMiddleware(s, req, r)
-	}
 
 	// Make a proxy request call
 	resp, err := http.DefaultClient.Do(req)
